@@ -627,6 +627,15 @@ RenderDoc::RenderDoc()
   m_ControlClientThreadShutdown = false;
 
   ClearTrackedFiles();
+
+  // Allow disabling multi-device cascade capture via environment variable. Enabled by
+  // default so that emulators splitting rendering/presenting across separate devices
+  // are captured correctly instead of producing empty capture shells.
+  {
+    rdcstr cascade = Process::GetEnvVariable("RENDERDOC_DISABLE_CASCADE_CAPTURE");
+    if(cascade == "1" || cascade == "true" || cascade == "TRUE" || cascade == "True")
+      m_CascadeCapture = false;
+  }
 }
 
 void RenderDoc::Initialise()
@@ -1115,6 +1124,127 @@ IFrameCapturer *RenderDoc::MatchFrameCapturer(DeviceOwnedWindow devWnd)
   return it->second.FrameCapturer;
 }
 
+void RenderDoc::CascadeStartCapture(IFrameCapturer *primary)
+{
+  if(!m_CascadeCapture)
+    return;
+
+  // Collect capturers to cascade to while holding the lock, then release before
+  // calling into the drivers (which may lock their own internal structures).
+  rdcarray<DeviceOwnedWindow> targetWnds;
+  rdcarray<IFrameCapturer *> targetCaps;
+  {
+    SCOPED_LOCK(m_CapturerListLock);
+
+    // Track which capturers we've already queued, since the same IFrameCapturer can
+    // be registered both as a window capturer and a device capturer.
+    rdcarray<IFrameCapturer *> seen;
+    for(auto it = m_WindowFrameCapturers.begin(); it != m_WindowFrameCapturers.end(); ++it)
+    {
+      IFrameCapturer *cap = it->second.FrameCapturer;
+      if(cap == NULL || cap == primary || seen.contains(cap))
+        continue;
+      seen.push_back(cap);
+      targetWnds.push_back(it->first);
+      targetCaps.push_back(cap);
+    }
+    for(auto it = m_DeviceFrameCapturers.begin(); it != m_DeviceFrameCapturers.end(); ++it)
+    {
+      IFrameCapturer *cap = it->second;
+      if(cap == NULL || cap == primary || seen.contains(cap))
+        continue;
+      seen.push_back(cap);
+      targetWnds.push_back(DeviceOwnedWindow(it->first, NULL));
+      targetCaps.push_back(cap);
+    }
+  }
+
+  for(size_t i = 0; i < targetCaps.size(); i++)
+  {
+    // each driver's StartFrameCapture no-ops unless it is in BackgroundCapturing
+    // state, so cascading onto a device that is already capturing is safe.
+    targetCaps[i]->StartFrameCapture(targetWnds[i]);
+    m_CapturesActive++;
+  }
+}
+
+void RenderDoc::CascadeEndCapture(IFrameCapturer *primary)
+{
+  if(!m_CascadeCapture)
+    return;
+
+  rdcarray<DeviceOwnedWindow> targetWnds;
+  rdcarray<IFrameCapturer *> targetCaps;
+  {
+    SCOPED_LOCK(m_CapturerListLock);
+
+    rdcarray<IFrameCapturer *> seen;
+    for(auto it = m_WindowFrameCapturers.begin(); it != m_WindowFrameCapturers.end(); ++it)
+    {
+      IFrameCapturer *cap = it->second.FrameCapturer;
+      if(cap == NULL || cap == primary || seen.contains(cap))
+        continue;
+      seen.push_back(cap);
+      targetWnds.push_back(it->first);
+      targetCaps.push_back(cap);
+    }
+    for(auto it = m_DeviceFrameCapturers.begin(); it != m_DeviceFrameCapturers.end(); ++it)
+    {
+      IFrameCapturer *cap = it->second;
+      if(cap == NULL || cap == primary || seen.contains(cap))
+        continue;
+      seen.push_back(cap);
+      targetWnds.push_back(DeviceOwnedWindow(it->first, NULL));
+      targetCaps.push_back(cap);
+    }
+  }
+
+  for(size_t i = 0; i < targetCaps.size(); i++)
+  {
+    // each driver's EndFrameCapture no-ops unless it is in ActiveCapturing state
+    targetCaps[i]->EndFrameCapture(targetWnds[i]);
+    m_CapturesActive--;
+  }
+}
+
+void RenderDoc::CascadeDiscardCapture(IFrameCapturer *primary)
+{
+  if(!m_CascadeCapture)
+    return;
+
+  rdcarray<DeviceOwnedWindow> targetWnds;
+  rdcarray<IFrameCapturer *> targetCaps;
+  {
+    SCOPED_LOCK(m_CapturerListLock);
+
+    rdcarray<IFrameCapturer *> seen;
+    for(auto it = m_WindowFrameCapturers.begin(); it != m_WindowFrameCapturers.end(); ++it)
+    {
+      IFrameCapturer *cap = it->second.FrameCapturer;
+      if(cap == NULL || cap == primary || seen.contains(cap))
+        continue;
+      seen.push_back(cap);
+      targetWnds.push_back(it->first);
+      targetCaps.push_back(cap);
+    }
+    for(auto it = m_DeviceFrameCapturers.begin(); it != m_DeviceFrameCapturers.end(); ++it)
+    {
+      IFrameCapturer *cap = it->second;
+      if(cap == NULL || cap == primary || seen.contains(cap))
+        continue;
+      seen.push_back(cap);
+      targetWnds.push_back(DeviceOwnedWindow(it->first, NULL));
+      targetCaps.push_back(cap);
+    }
+  }
+
+  for(size_t i = 0; i < targetCaps.size(); i++)
+  {
+    targetCaps[i]->DiscardFrameCapture(targetWnds[i]);
+    m_CapturesActive--;
+  }
+}
+
 void RenderDoc::StartFrameCapture(DeviceOwnedWindow devWnd)
 {
   m_CaptureTitle.clear();
@@ -1124,6 +1254,12 @@ void RenderDoc::StartFrameCapture(DeviceOwnedWindow devWnd)
     frameCap->StartFrameCapture(devWnd);
     m_CapturesActive++;
   }
+
+  // Cascade the capture to every other registered device. In multi-device
+  // scenarios (e.g. Android emulators) the device that presents to the screen
+  // is often not the one doing the real rendering, so we must capture all of
+  // them together to avoid an empty capture shell.
+  CascadeStartCapture(frameCap);
 }
 
 void RenderDoc::SetActiveWindow(DeviceOwnedWindow devWnd)
@@ -1149,25 +1285,29 @@ void RenderDoc::SetCaptureTitle(const rdcstr &title)
 bool RenderDoc::EndFrameCapture(DeviceOwnedWindow devWnd)
 {
   IFrameCapturer *frameCap = MatchFrameCapturer(devWnd);
+  bool ret = false;
   if(frameCap)
   {
-    bool ret = frameCap->EndFrameCapture(devWnd);
+    ret = frameCap->EndFrameCapture(devWnd);
     m_CapturesActive--;
-    return ret;
   }
-  return false;
+
+  CascadeEndCapture(frameCap);
+  return ret;
 }
 
 bool RenderDoc::DiscardFrameCapture(DeviceOwnedWindow devWnd)
 {
   IFrameCapturer *frameCap = MatchFrameCapturer(devWnd);
+  bool ret = false;
   if(frameCap)
   {
-    bool ret = frameCap->DiscardFrameCapture(devWnd);
+    ret = frameCap->DiscardFrameCapture(devWnd);
     m_CapturesActive--;
-    return ret;
   }
-  return false;
+
+  CascadeDiscardCapture(frameCap);
+  return ret;
 }
 
 bool RenderDoc::IsTargetControlConnected()

@@ -750,6 +750,13 @@ private:
 
   int m_CapturesActive;
 
+  // When true, a capture triggered on one device cascades to all other registered
+  // frame capturers. Essential for multi-device scenarios such as Android emulators
+  // where rendering happens on a background offscreen device while a separate device
+  // only presents to the screen - without this, only the presenting device is
+  // captured, yielding an empty capture with no real draw calls.
+  bool m_CascadeCapture = true;
+
   Threading::CriticalSection m_CapturerListLock;
   std::map<DeviceOwnedWindow, FrameCap> m_WindowFrameCapturers;
   DeviceOwnedWindow m_ActiveWindow;
@@ -774,6 +781,13 @@ private:
 
   mutable Threading::RWLock m_TrackedFilesLock;
   rdcarray<TrackedFile> m_TrackedFiles;
+
+  // Cascade a capture to every other registered frame capturer besides 'primary'.
+  // Each driver's StartFrameCapture/EndFrameCapture guards against being called in
+  // the wrong state, so cascading is safe regardless of a device's current state.
+  void CascadeStartCapture(IFrameCapturer *primary);
+  void CascadeEndCapture(IFrameCapturer *primary);
+  void CascadeDiscardCapture(IFrameCapturer *primary);
 
   void ProcessConfig();
 
