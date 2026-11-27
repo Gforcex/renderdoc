@@ -318,9 +318,12 @@ void RemoteManager::connectToApp(RDTreeWidgetItem *node)
 
     if(connect.ident > 0)
     {
-      LiveCapture *live =
-          new LiveCapture(m_Ctx, connect.host, connect.friendly, connect.ident, m_Main, m_Main);
-      m_Main->ShowLiveCapture(live);
+      if(!m_Main->RaiseConnectedTarget(connect.host, connect.ident))
+      {
+        LiveCapture *live =
+            new LiveCapture(m_Ctx, connect.host, connect.friendly, connect.ident, m_Main, m_Main);
+        m_Main->ShowLiveCapture(live);
+      }
       accept();
     }
   }

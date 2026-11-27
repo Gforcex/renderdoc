@@ -636,6 +636,18 @@ RenderDoc::RenderDoc()
     if(cascade == "1" || cascade == "true" || cascade == "TRUE" || cascade == "True")
       m_CascadeCapture = false;
   }
+
+#if ENABLED(RDOC_WIN32)
+  // HD-Player registers guest and UI renderers in the same process. Starting a
+  // second driver from inside the presenting driver's callback can stall both.
+  rdcstr exe;
+  FileIO::GetExecutableFilename(exe);
+  if(strlower(get_basename(exe)) == "hd-player.exe")
+  {
+    m_CascadeCapture = false;
+    m_PreferBlueStacksGLWindow = true;
+  }
+#endif
 }
 
 void RenderDoc::Initialise()
@@ -1261,7 +1273,13 @@ void RenderDoc::CascadeDiscardCapture(IFrameCapturer *primary)
 void RenderDoc::StartFrameCapture(DeviceOwnedWindow devWnd)
 {
   m_CaptureTitle.clear();
-  IFrameCapturer *frameCap = MatchFrameCapturer(devWnd);
+  IFrameCapturer *frameCap;
+  {
+    SCOPED_LOCK(m_CapturerListLock);
+    frameCap = MatchFrameCapturer(devWnd);
+    if(frameCap)
+      m_PreferBlueStacksGLWindow = false;
+  }
   if(frameCap)
   {
     frameCap->StartFrameCapture(devWnd);
@@ -1287,6 +1305,7 @@ void RenderDoc::SetActiveWindow(DeviceOwnedWindow devWnd)
     return;
   }
 
+  m_PreferBlueStacksGLWindow = false;
   m_ActiveWindow = devWnd;
 }
 
@@ -1404,6 +1423,7 @@ void RenderDoc::CycleActiveWindow()
     {
       if(it->first == m_ActiveWindow)
       {
+        m_PreferBlueStacksGLWindow = false;
         auto nextit = it;
         ++nextit;
 
@@ -1627,15 +1647,27 @@ rdcstr RenderDoc::GetOverlayText(RDCDriver driver, DeviceOwnedWindow devWnd, uin
   return overlayText;
 }
 
+void RenderDoc::TriggerCapture(uint32_t numFrames)
+{
+  SCOPED_LOCK(m_CapturerListLock);
+  m_Cap = numFrames;
+}
+
 void RenderDoc::QueueCapture(uint32_t frameNumber)
 {
+  SCOPED_LOCK(m_CapturerListLock);
   auto it = std::lower_bound(m_QueuedFrameCaptures.begin(), m_QueuedFrameCaptures.end(), frameNumber);
   if(it == m_QueuedFrameCaptures.end() || *it != frameNumber)
     m_QueuedFrameCaptures.insert(it - m_QueuedFrameCaptures.begin(), frameNumber);
 }
 
-bool RenderDoc::ShouldTriggerCapture(uint32_t frameNumber)
+bool RenderDoc::ShouldTriggerCapture(uint32_t frameNumber, DeviceOwnedWindow devWnd)
 {
+  SCOPED_LOCK(m_CapturerListLock);
+  // Window selection can change between drawing the overlay and claiming a request.
+  if(devWnd.windowHandle && !(devWnd == m_ActiveWindow))
+    return false;
+
   bool ret = m_Cap > 0;
 
   if(m_Cap > 0)
@@ -1661,6 +1693,8 @@ bool RenderDoc::ShouldTriggerCapture(uint32_t frameNumber)
     }
   }
 
+  if(ret)
+    m_PreferBlueStacksGLWindow = false;
   return ret;
 }
 
@@ -2513,8 +2547,15 @@ void RenderDoc::AddFrameCapturer(DeviceOwnedWindow devWnd, IFrameCapturer *cap)
     m_WindowFrameCapturers[devWnd].FrameCapturer = cap;
   }
 
-  // the first one we see becomes the default
-  if(m_ActiveWindow == DeviceOwnedWindow())
+  // The BlueStacks UI swapchain can register first. Prefer the first GL window
+  // that actually presents, then leave subsequent target selection to the user.
+  if(m_PreferBlueStacksGLWindow && cap->GetFrameCaptureDriver() == RDCDriver::OpenGL)
+  {
+    m_ActiveWindow = devWnd;
+    m_PreferBlueStacksGLWindow = false;
+    RDCLOG("Selected BlueStacks OpenGL capture window %p", devWnd.windowHandle);
+  }
+  else if(m_ActiveWindow == DeviceOwnedWindow())
     m_ActiveWindow = devWnd;
 }
 

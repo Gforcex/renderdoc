@@ -64,6 +64,8 @@ public:
     m_CloseCallbacks.push_back(method);
   }
   bool IsConnected() override;
+  uint32_t LocalPID() const { return isLocal() ? m_PID : 0; }
+  bool MatchesTarget(const QString &host, uint32_t ident) const;
   void PreventAutoClose() override { m_SelfClosing = false; }
   rdcarray<rdcstr> GetAPIs() override;
   void QueueCapture(int frameNumber, int numFrames) override;
@@ -186,6 +188,7 @@ private:
   QString m_Hostname;
   QString m_HostFriendlyname;
   uint32_t m_RemoteIdent;
+  uint32_t m_PID = 0;
   MainWindow *m_Main;
 
   LambdaThread *m_ConnectThread = NULL;

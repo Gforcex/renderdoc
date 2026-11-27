@@ -43,6 +43,8 @@ extern "C" const rdcstr VulkanLayerJSONBasename;
 #define VK_LAYER_EXPORT
 #if ENABLED(RDOC_WIN32)
 
+bool BlueStacksHasConflictingVulkanLayer();
+
 #undef VK_LAYER_EXPORT
 #define VK_LAYER_EXPORT extern "C" __declspec(dllexport)
 
@@ -120,9 +122,13 @@ class VulkanHook : LibraryHook
     }
     else
     {
-      // we assume the implicit layer is registered - the UI will prompt the user about installing it.
+      const char *enable = "1";
+#if ENABLED(RDOC_WIN32)
+      if(BlueStacksHasConflictingVulkanLayer())
+        enable = "0";
+#endif
       Process::RegisterEnvironmentModification(
-          EnvironmentModification(EnvMod::Set, EnvSep::NoSep, RENDERDOC_VULKAN_LAYER_VAR, "1"));
+          EnvironmentModification(EnvMod::Set, EnvSep::NoSep, RENDERDOC_VULKAN_LAYER_VAR, enable));
     }
 
     // RTSS layer is buggy, disable it to avoid bug reports that are caused by it

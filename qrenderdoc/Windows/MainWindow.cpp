@@ -833,6 +833,16 @@ void MainWindow::OnInjectTrigger(uint32_t PID, const rdcarray<EnvironmentModific
                                  const QString &name, CaptureOptions opts,
                                  std::function<void(ICaptureConnection *)> callback)
 {
+  for(LiveCapture *live : m_LiveCaptures)
+  {
+    if(PID && live->IsConnected() && live->LocalPID() == PID)
+    {
+      ToolWindowManager::raiseToolWindow(live);
+      callback(live);
+      return;
+    }
+  }
+
   if(!PromptCloseCapture())
     return;
 
@@ -1644,6 +1654,19 @@ void MainWindow::UpdatePopup()
 
   UpdateDialog update((QString)m_Ctx.Config().CheckUpdate_UpdateResponse);
   RDDialog::show(&update);
+}
+
+bool MainWindow::RaiseConnectedTarget(const QString &host, uint32_t ident)
+{
+  for(LiveCapture *live : m_LiveCaptures)
+  {
+    if(live->IsConnected() && live->MatchesTarget(host, ident))
+    {
+      ToolWindowManager::raiseToolWindow(live);
+      return true;
+    }
+  }
+  return false;
 }
 
 void MainWindow::ShowLiveCapture(LiveCapture *live)

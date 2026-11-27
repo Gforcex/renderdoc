@@ -3064,6 +3064,10 @@ void WrappedOpenGL::PersistentMapMemoryBarrier(const std::set<GLResourceRecord *
 
     RDCASSERT(record && record->Map.ptr);
 
+    // Names of mapped buffers are only valid inside their owning share group.
+    if(record->Resource.ContextShareGroup != GetCtx().shareGroup)
+      continue;
+
     if(record->Map.ptr)
     {
       size_t diffStart = 0, diffEnd = record->Map.length;

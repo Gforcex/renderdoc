@@ -117,6 +117,7 @@ public:
                        std::function<void(ICaptureConnection *)> callback);
 
   void ShowLiveCapture(LiveCapture *live);
+  bool RaiseConnectedTarget(const QString &host, uint32_t ident);
   void LiveCaptureClosed(LiveCapture *live);
 
   bool PromptSaveCaptureAs();

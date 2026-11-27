@@ -288,6 +288,39 @@ bool ProcessImplicitLayersKey(HKEY key, const rdcstr &path, rdcarray<rdcstr> *ot
   return thisRegistered;
 }
 
+// HD-Player initialises Vulkan even when the guest is rendering with OpenGL. Enabling a
+// manifest from another install loads a second renderdoc.dll and replaces the GL hooks.
+bool BlueStacksHasConflictingVulkanLayer()
+{
+  rdcstr exe;
+  FileIO::GetExecutableFilename(exe);
+  if(strlower(get_basename(exe)) != "hd-player.exe")
+    return false;
+
+  HKEY key = GetImplicitLayersKey(false, false);
+  if(!key)
+    return false;
+
+  rdcarray<rdcstr> others;
+  ProcessImplicitLayersKey(key, GetJSONPath(false), &others, false);
+  bool conflict = false;
+  for(const rdcstr &path : others)
+  {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    if(RegGetValueW(key, NULL, StringFormat::UTF82Wide(path).c_str(), RRF_RT_REG_DWORD, NULL,
+                    &value, &size) == ERROR_SUCCESS && value == 0)
+    {
+      RDCWARN("Skipping Vulkan capture in HD-Player: another RenderDoc layer is registered at %s",
+              path.c_str());
+      conflict = true;
+      break;
+    }
+  }
+  RegCloseKey(key);
+  return conflict;
+}
+
 bool VulkanReplay::CheckVulkanLayer(VulkanLayerFlags &flags, rdcarray<rdcstr> &myJSONs,
                                     rdcarray<rdcstr> &otherJSONs)
 {

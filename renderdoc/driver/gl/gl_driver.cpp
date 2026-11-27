@@ -617,6 +617,22 @@ WrappedOpenGL::WrappedOpenGL(GLPlatform &platform)
 {
   RenderDoc::Inst().RegisterMemoryRegion(this, sizeof(WrappedOpenGL));
 
+#if ENABLED(RDOC_WIN32)
+  rdcstr executable;
+  FileIO::GetExecutableFilename(executable);
+  if(strlower(get_basename(executable)) == "hd-player.exe")
+  {
+    const rdcstr mode = Process::GetEnvVariable("RENDERDOC_BLUESTACKS_GUEST_FRAMES");
+    m_BlueStacksGuestFrames = mode == "1";
+#if defined(RENDERDOC_BLUESTACKS_GUEST_FRAMES_DEFAULT)
+    if(mode.empty())
+      m_BlueStacksGuestFrames = true;
+#endif
+    RDCLOG("BlueStacks OpenGL capture boundary: %s",
+           m_BlueStacksGuestFrames ? "guest submission" : "host SwapBuffers");
+  }
+#endif
+
   BuildGLExtensions();
   BuildGLESExtensions();
   // by default we assume OpenGL driver
@@ -1112,6 +1128,11 @@ void WrappedOpenGL::DeleteContext(void *contextHandle)
   GLWindowingData existing = m_ActiveContexts[Threading::GetCurrentID()];
 
   RDCLOG("Deleting context %p", contextHandle);
+
+  if(m_GuestCaptureContext == contextHandle && m_GuestCaptureContext)
+    RenderDoc::Inst().DiscardFrameCapture(DeviceOwnedWindow(contextHandle, NULL));
+  if(m_BlueStacksPresentWindow.device == contextHandle)
+    m_BlueStacksPresentWindow = DeviceOwnedWindow();
 
   if(ctxdata.Modern())
     RenderDoc::Inst().RemoveDeviceFrameCapturer(ctxdata.ctx);
@@ -2111,6 +2132,15 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
 
   bool activeWindow = RenderDoc::Inst().IsActiveWindow(devWnd);
 
+  if(m_BlueStacksGuestFrames && activeWindow && ctxdata.Modern())
+    m_BlueStacksPresentWindow = devWnd;
+
+  if(m_GuestCaptureContext && m_CaptureTimer.GetMilliseconds() > 5000.0)
+  {
+    RDCWARN("Discarding BlueStacks capture after guest submissions stopped");
+    RenderDoc::Inst().DiscardFrameCapture(DeviceOwnedWindow(m_GuestCaptureContext, NULL));
+  }
+
   // look at previous associations and decay any that are too old
   uint64_t ref = Timing::GetUnixTimestamp() - 5;    // 5 seconds
 
@@ -2200,7 +2230,9 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
     }
   }
 
-  if(IsActiveCapturing(m_State) && m_AppControlledCapture)
+  if(IsActiveCapturing(m_State) && m_AppControlledCapture &&
+     (!m_GuestCaptureContext ||
+      (activeWindow && m_BackbufferImages.find(windowHandle) == m_BackbufferImages.end())))
   {
     delete m_BackbufferImages[windowHandle];
     m_BackbufferImages[windowHandle] = SaveBackbufferImage();
@@ -2243,12 +2275,42 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
   if(IsActiveCapturing(m_State) && !m_AppControlledCapture)
     RenderDoc::Inst().EndFrameCapture(devWnd);
 
-  if(RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter) && IsBackgroundCapturing(m_State))
+  if(!m_BlueStacksGuestFrames && IsBackgroundCapturing(m_State) &&
+     RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter, devWnd))
   {
     RenderDoc::Inst().StartFrameCapture(devWnd);
 
     m_AppControlledCapture = false;
     m_CapturedFrames.back().frameNumber = m_FrameCounter;
+  }
+}
+
+void WrappedOpenGL::CheckBlueStacksFrameBoundary()
+{
+  // In the Pie64 OpenGL traces the guest waits for its previous work, inserts two
+  // fences, then flushes. The compositor also flushes but only inserts one fence.
+  ContextData &ctx = GetCtxData();
+  const bool submitted = ctx.guestFencesAfterWait >= 2;
+  ctx.guestWaitSeen = false;
+  ctx.guestFencesAfterWait = 0;
+
+  if(!submitted || ctx.Legacy() || !ctx.windows.empty() || !m_UnsupportedFunctions.empty())
+    return;
+
+  DeviceOwnedWindow guest(ctx.ctx, NULL);
+  if(m_GuestCaptureContext == ctx.ctx)
+    RenderDoc::Inst().EndFrameCapture(guest);
+
+  if(IsBackgroundCapturing(m_State) && m_BlueStacksPresentWindow.windowHandle &&
+     RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter, m_BlueStacksPresentWindow))
+  {
+    RenderDoc::Inst().StartFrameCapture(guest);
+    if(IsActiveCapturing(m_State))
+    {
+      m_GuestCaptureContext = ctx.ctx;
+      m_CapturedFrames.back().frameNumber = m_FrameCounter;
+      m_CaptureTimer.Restart();
+    }
   }
 }
 
@@ -2347,6 +2409,8 @@ bool WrappedOpenGL::EndFrameCapture(DeviceOwnedWindow devWnd)
   SCOPED_LOCK(glLock);
 
   CaptureFailReason reason = CaptureSucceeded;
+  bool guestCapture = m_GuestCaptureContext != NULL;
+  m_GuestCaptureContext = NULL;
 
   GLWindowingData existing = m_ActiveContexts[Threading::GetCurrentID()];
   GLWindowingData newContext = existing;
@@ -2367,10 +2431,11 @@ bool WrappedOpenGL::EndFrameCapture(DeviceOwnedWindow devWnd)
 
     // if the specified context isn't current, try and see if we've saved
     // an appropriate backbuffer image during capture.
-    if((devWnd.device != NULL && existing.ctx != devWnd.device) ||
+    if(guestCapture || (devWnd.device != NULL && existing.ctx != devWnd.device) ||
        (devWnd.windowHandle != 0 && (void *)existing.wnd != devWnd.windowHandle))
     {
-      auto it = m_BackbufferImages.find(devWnd.windowHandle);
+      auto it = m_BackbufferImages.find(guestCapture ? m_BlueStacksPresentWindow.windowHandle
+                                                     : devWnd.windowHandle);
       if(it != m_BackbufferImages.end())
       {
         // pop this backbuffer image out of the map
@@ -2382,7 +2447,7 @@ bool WrappedOpenGL::EndFrameCapture(DeviceOwnedWindow devWnd)
     // if we don't have one selected, save the backbuffer image from the
     // current context
     if(bbim == NULL)
-      bbim = SaveBackbufferImage();
+      bbim = guestCapture ? new RenderDoc::FramePixels() : SaveBackbufferImage();
 
     RDCFile *rdc =
         RenderDoc::Inst().CreateRDC(GetDriverType(), m_CapturedFrames.back().frameNumber, bbim[0]);
@@ -2651,6 +2716,7 @@ bool WrappedOpenGL::DiscardFrameCapture(DeviceOwnedWindow devWnd)
   RDCLOG("Discarding frame capture.");
 
   SCOPED_LOCK(glLock);
+  m_GuestCaptureContext = NULL;
 
   RenderDoc::Inst().FinishCaptureWriting(NULL, m_CapturedFrames.back().frameNumber);
 

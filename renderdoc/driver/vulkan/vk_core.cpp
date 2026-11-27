@@ -3588,7 +3588,7 @@ void WrappedVulkan::Present(DeviceOwnedWindow devWnd)
   if(IsActiveCapturing(m_State) && !m_AppControlledCapture)
     RenderDoc::Inst().EndFrameCapture(devWnd);
 
-  if(RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter) && IsBackgroundCapturing(m_State))
+  if(IsBackgroundCapturing(m_State) && RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter, devWnd))
   {
     RenderDoc::Inst().StartFrameCapture(devWnd);
 

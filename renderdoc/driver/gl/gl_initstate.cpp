@@ -228,8 +228,8 @@ void GLResourceManager::ContextPrepare_InitialState(GLResource res)
 
     // workaround for some drivers - mapping/unmapping here seems to help avoid problems mapping
     // later.
-    GL.glMapNamedBufferEXT(buf, eGL_READ_ONLY);
-    GL.glUnmapNamedBufferEXT(buf);
+    if(GL.glMapNamedBufferEXT(buf, eGL_READ_ONLY))
+      GL.glUnmapNamedBufferEXT(buf);
 
     // restore old bindings
     GL.glBindBuffer(eGL_COPY_READ_BUFFER, oldbuf1);
@@ -1155,7 +1155,7 @@ bool GLResourceManager::Serialise_InitialState(SerialiserType &ser, ResourceId i
     ser.Serialise("BufferContents"_lit, BufferContents, BufferContentsSize, SerialiserFlags::NoFlags)
         .Important();
 
-    if(mappedBuffer.name)
+    if(mappedBuffer.name && BufferContents)
       GL.glUnmapNamedBufferEXT(mappedBuffer.name);
 
     SERIALISE_CHECK_READ_ERRORS();
@@ -1858,6 +1858,11 @@ bool GLResourceManager::Serialise_InitialState(WriteSerialiser &ser, ResourceId 
   if(IsResourceTrackedForPersistency(res))
   {
     GLWindowingData oldContextData = m_Driver->m_ActiveContexts[Threading::GetCurrentID()];
+
+    // Shared buffers and textures can be read directly on their owning share group.
+    const ContextPair &ctx = m_Driver->GetCtx();
+    if(oldContextData.ctx == ctx.ctx && ctx.shareGroup == res.ContextShareGroup)
+      return Serialise_InitialState<WriteSerialiser>(ser, id, record, initial);
 
     GLWindowingData backdoor = ((ContextShareGroup *)res.ContextShareGroup)->m_BackDoor;
 

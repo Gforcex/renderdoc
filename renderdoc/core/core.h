@@ -610,7 +610,7 @@ public:
 
   bool IsActiveWindow(DeviceOwnedWindow devWnd);
   void GetActiveWindow(DeviceOwnedWindow &devWnd);
-  void TriggerCapture(uint32_t numFrames) { m_Cap = numFrames; }
+  void TriggerCapture(uint32_t numFrames);
   uint32_t GetOverlayBits() { return m_Overlay; }
   void MaskOverlayBits(uint32_t And, uint32_t Or) { m_Overlay = (m_Overlay & And) | Or; }
   void QueueCapture(uint32_t frameNumber);
@@ -629,7 +629,7 @@ public:
 
   const rdcarray<RENDERDOC_InputButton> &GetFocusKeys() { return m_FocusKeys; }
   const rdcarray<RENDERDOC_InputButton> &GetCaptureKeys() { return m_CaptureKeys; }
-  bool ShouldTriggerCapture(uint32_t frameNumber);
+  bool ShouldTriggerCapture(uint32_t frameNumber, DeviceOwnedWindow devWnd = {});
 
   enum
   {
@@ -761,6 +761,7 @@ private:
   // only presents to the screen - without this, only the presenting device is
   // captured, yielding an empty capture with no real draw calls.
   bool m_CascadeCapture = true;
+  bool m_PreferBlueStacksGLWindow = false;
 
   Threading::CriticalSection m_CapturerListLock;
   std::map<DeviceOwnedWindow, FrameCap> m_WindowFrameCapturers;

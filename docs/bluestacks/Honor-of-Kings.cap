@@ -1,0 +1,24 @@
+{
+  "rdocCaptureSettings": 1,
+  "settings": {
+    "inject": false,
+    "autoStart": false,
+    "executable": "C:\\Program Files\\BlueStacks_nxt_cn\\HD-Player.exe",
+    "workingDir": "C:\\Program Files\\BlueStacks_nxt_cn",
+    "commandLine": "--instance Pie64 --cmd launchApp --package com.tencent.tmgp.sgame",
+    "environment": [
+      {
+        "variable": "RENDERDOC_BLUESTACKS_GUEST_FRAMES",
+        "value": "1",
+        "type": "Set",
+        "separator": "None"
+      }
+    ],
+    "options": {
+      "allowVSync": true,
+      "allowFullscreen": true,
+      "captureAllCmdLists": true,
+      "debugOutputMute": true
+    }
+  }
+}

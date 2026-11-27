@@ -4919,6 +4919,9 @@ void WrappedOpenGL::glFlush()
 
     GetContextRecord()->AddChunk(scope.Get());
   }
+
+  if(m_BlueStacksGuestFrames)
+    CheckBlueStacksFrameBoundary();
 }
 
 template <typename SerialiserType>

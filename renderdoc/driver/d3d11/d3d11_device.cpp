@@ -2800,7 +2800,7 @@ HRESULT WrappedID3D11Device::Present(IDXGISwapper *swapper, UINT SyncInterval, U
     RenderDoc::Inst().EndFrameCapture(devWnd);
   }
 
-  if(IsBackgroundCapturing(m_State) && RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter))
+  if(IsBackgroundCapturing(m_State) && RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter, devWnd))
   {
     RenderDoc::Inst().StartFrameCapture(devWnd);
 

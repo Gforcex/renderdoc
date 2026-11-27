@@ -89,6 +89,13 @@ GLsync WrappedOpenGL::glFenceSync(GLenum condition, GLbitfield flags)
   GLsync sync;
   SERIALISE_TIME_CALL(sync = GL.glFenceSync(condition, flags));
 
+  if(m_BlueStacksGuestFrames && sync)
+  {
+    ContextData &ctx = GetCtxData();
+    if(ctx.guestWaitSeen && ctx.guestFencesAfterWait < 2)
+      ++ctx.guestFencesAfterWait;
+  }
+
   GLuint name = 0;
   ResourceId id = GetResourceManager()->RegisterSync(ResourceId(), GetCtx(), sync, name);
   GLResource res = SyncRes(GetCtx(), name);
@@ -134,6 +141,9 @@ GLenum WrappedOpenGL::glClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 t
 {
   GLenum ret;
   SERIALISE_TIME_CALL(ret = GL.glClientWaitSync(sync, flags, timeout));
+
+  if(m_BlueStacksGuestFrames && ret != eGL_WAIT_FAILED)
+    GetCtxData().guestWaitSeen = true;
 
   if(IsActiveCapturing(m_State))
   {

@@ -145,6 +145,10 @@ private:
   // internals
   CaptureState m_State;
   bool m_AppControlledCapture = false;
+  bool m_BlueStacksGuestFrames = false;
+  DeviceOwnedWindow m_BlueStacksPresentWindow;
+  void *m_GuestCaptureContext = NULL;
+  void CheckBlueStacksFrameBoundary();
   bool m_FirstFrameCapture = false;
   void *m_FirstFrameCaptureContext = NULL;
 
@@ -418,6 +422,8 @@ private:
 
     void *ctx;
 
+    bool guestWaitSeen = false;
+    unsigned guestFencesAfterWait = 0;
     ContextShareGroup *shareGroup;
 
     GLDEBUGPROC m_RealDebugFunc;

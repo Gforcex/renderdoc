@@ -198,6 +198,12 @@ bool LiveCapture::IsConnected()
   return m_Connected.available();
 }
 
+bool LiveCapture::MatchesTarget(const QString &host, uint32_t ident) const
+{
+  return m_RemoteIdent == ident &&
+         (host == m_Hostname || (isLocal() && (host.isEmpty() || host == lit("localhost"))));
+}
+
 rdcarray<rdcstr> LiveCapture::GetAPIs()
 {
   rdcarray<rdcstr> ret;
@@ -1454,6 +1460,7 @@ void LiveCapture::connectionThreadEntry()
     else
       setTitle(target);
 
+    m_PID = pid;
     m_Target = target;
 
     ui->target->setText(windowTitle());

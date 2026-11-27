@@ -148,7 +148,9 @@
     <ClCompile Include="gl_common.cpp" />
     <ClCompile Include="gl_counters.cpp" />
     <ClCompile Include="gl_debug.cpp" />
-    <ClCompile Include="gl_driver.cpp" />
+    <ClCompile Include="gl_driver.cpp">
+      <PreprocessorDefinitions Condition="'$(BlueStacksGuestFrames)'=='true'">RENDERDOC_BLUESTACKS_GUEST_FRAMES_DEFAULT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="gl_hooks.cpp" />
     <ClCompile Include="gl_pixelhistory.cpp" />
     <ClCompile Include="gl_shaderdebug.cpp" />
